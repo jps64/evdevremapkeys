@@ -20,7 +20,6 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-
 import argparse
 import asyncio
 import functools
@@ -31,6 +30,7 @@ import signal
 import evdev
 from evdev import ecodes, InputDevice, UInput
 import pyudev
+import selectors
 from xdg import BaseDirectory
 import yaml
 
@@ -171,6 +171,7 @@ def load_config(config_override):
     if config_override is None:
         for dir in BaseDirectory.load_config_paths('evdevremapkeys'):
             conf_path = Path(dir) / 'config.yaml'
+            print(Path(dir))
             if conf_path.is_file():
                 break
         if conf_path is None:
@@ -367,38 +368,56 @@ def run_loop(args):
 
 
 def list_devices():
-    devices = [InputDevice(fn) for fn in evdev.list_devices()]
+    devices = [InputDevice(path) for path in evdev.list_devices()]
     for device in reversed(devices):
-        yield [device.fn, device.phys, device.name]
+        yield [device.path, device.phys, device.name]
 
 
-def read_events(req_device):
-    for device in list_devices():
-        # Look in all 3 identifiers + event number
-        if req_device in device or \
-           req_device == device[0].replace("/dev/input/event", ""):
-            found = evdev.InputDevice(device[0])
-
-    if 'found' not in locals():
-        print("Device not found. \nPlease use --list-devices to view a list of available devices.")  # noqa
-        return
-
-    print(found)
+def read_events(req_devices):
+    selector = selectors.DefaultSelector()
+    found_devices = []
+    for req_device in req_devices:
+        for device in list_devices():
+            # Look in all 3 identifiers + event number
+            if req_device in device or \
+               req_device == device[0].replace("/dev/input/event", ""):
+                found = evdev.InputDevice(device[0])
+    
+        if 'found' not in locals():
+            print("Device not found. \nPlease use --list-devices to view a list of available devices.")  # noqa
+            return
+    
+        print(found)
+        found_devices.append(found)
     print("To stop, press Ctrl-C")
 
-    for event in found.read_loop():
-        try:
-            if event.type == evdev.ecodes.EV_KEY:
-                categorized = evdev.categorize(event)
-                if categorized.keystate == 1:
-                    keycode = categorized.keycode if type(categorized.keycode) is str \
-                        else " | ".join(categorized.keycode)
-                    print("Key pressed: %s (%s)" % (keycode, categorized.scancode))
-        except KeyError:
-            if event.value:
-                print("Unknown key (%s) has been pressed." % event.code)
-            else:
-                print("Unknown key (%s) has been released." % event.code)
+    # This works because InputDevice has a `fileno()` method.
+    for found in found_devices:
+        selector.register(found, selectors.EVENT_READ)
+
+    while True:
+        for key, mask in selector.select():
+            device_fn = key.fileobj
+            for event in device_fn.read():
+                #    for event in found.read_loop():
+                try:
+                    if event.type == evdev.ecodes.EV_KEY:
+                        categorized = evdev.categorize(event)
+                        if categorized.keystate == 1:
+                            keycode = categorized.keycode if type(categorized.keycode) is str \
+                                else " | ".join(categorized.keycode)
+                            print("Key pressed: %s (%s)" % (keycode, categorized.scancode))
+                    elif event.type == evdev.ecodes.EV_REL:
+                        categorized = evdev.categorize(event)
+                        print("Relative move: (%s) %d" % (evdev.ecodes.REL[event.code], event.value))
+                    elif event.type == evdev.ecodes.EV_ABS:
+                        categorized = evdev.categorize(event)
+                        print("Absolute position: (%s) %3f" % (evdev.ecodes.ABS[event.code], event.value))
+                except KeyError:
+                    if event.value:
+                        print("Unknown key (%s) has been pressed." % event.code)
+                    else:
+                        print("Unknown key (%s) has been released." % event.code)
 
 
 def main():
@@ -407,7 +426,7 @@ def main():
                         help='Config file that overrides default location')
     parser.add_argument('-l', '--list-devices', action='store_true',
                         help='List input devices by name and physical address')
-    parser.add_argument('-e', '--read-events', metavar='EVENT_ID',
+    parser.add_argument('-e', '--read-events', metavar='EVENT_ID', nargs='+',
                         help='Read events from an input device by either name, physical address or number.')  # noqa
 
     args = parser.parse_args()
