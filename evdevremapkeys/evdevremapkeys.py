@@ -397,27 +397,26 @@ def read_events(req_devices):
 
     while True:
         for key, mask in selector.select():
-            device_fn = key.fileobj
-            for event in device_fn.read():
-                #    for event in found.read_loop():
+            device = key.fileobj
+            for event in device.read():
                 try:
                     if event.type == evdev.ecodes.EV_KEY:
                         categorized = evdev.categorize(event)
                         if categorized.keystate == 1:
                             keycode = categorized.keycode if type(categorized.keycode) is str \
                                 else " | ".join(categorized.keycode)
-                            print("Key pressed: %s (%s)" % (keycode, categorized.scancode))
+                            print("%s | Key pressed: %s (%s)" % (device.path, keycode, categorized.scancode))
                     elif event.type == evdev.ecodes.EV_REL:
                         categorized = evdev.categorize(event)
-                        print("Relative move: (%s) %d" % (evdev.ecodes.REL[event.code], event.value))
+                        print("%s | Relative move: (%s) %d" % (device.path, evdev.ecodes.REL[event.code], event.value))
                     elif event.type == evdev.ecodes.EV_ABS:
                         categorized = evdev.categorize(event)
-                        print("Absolute position: (%s) %3f" % (evdev.ecodes.ABS[event.code], event.value))
+                        print("%s | Absolute position: (%s) %3f" % (device.path, evdev.ecodes.ABS[event.code], event.value))
                 except KeyError:
                     if event.value:
-                        print("Unknown key (%s) has been pressed." % event.code)
+                        print("%s | Unknown key (%s) has been pressed." % (device.path, event.code))
                     else:
-                        print("Unknown key (%s) has been released." % event.code)
+                        print("%s | Unknown key (%s) has been released." % (device.path, event.code))
 
 
 def main():
@@ -431,7 +430,7 @@ def main():
 
     args = parser.parse_args()
     if args.list_devices:
-        print("\n".join(['%s:\t"%s" | "%s' %
+        print("\n".join(['%s:\t"%s" | "%s"' %
               (fn, phys, name) for (fn, phys, name) in list_devices()]))
     elif args.read_events:
         read_events(args.read_events)
